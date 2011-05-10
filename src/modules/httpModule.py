@@ -47,25 +47,33 @@ class HTTP(moduleInterface.Module):
         a looping call 
         """
         
-        self.hash = hash
+        self.hash   = hash
         self.config = conf
-        self.cont = True
+        self.cont   = True
         
+    @property
+    def host(self):
+        return self.config['botnet']
+
+    @property
+    def port(self):
+        return int(self.config['port'])
+
     def run(self):
         """
         Start execution
         """
         
-        self.prox = proxySelector.ProxySelector()
-        self.factory = HTTPClientFactory(self, self.hash, self.config)
-        self.host = self.config['botnet']
-        self.port = int(self.config['port'])
-        self.proxyInfo = self.prox.getRandomProxy()
-        if self.proxyInfo != None:
+        self.prox       = proxySelector.ProxySelector()
+        self.factory    = HTTPClientFactory(self, self.hash, self.config)
+        self.proxyInfo  = self.prox.getRandomProxy()
+
+        if self.proxyInfo:
             self.proxyHost = self.proxyInfo['HOST']
             self.proxyPort = self.proxyInfo['PORT']
             self.proxyUser = self.proxyInfo['USER']
             self.proxyPass = self.proxyInfo['PASS']
+
         self.connect()
         
     def connect(self):
@@ -79,12 +87,23 @@ class HTTP(moduleInterface.Module):
         
         if self.proxyInfo == None:
             self.connector = reactor.connectTCP(self.host, self.port, self.factory)
+            return
+        
+        socksify = socks5.ProxyClientCreator(reactor, self.factory)
+        if len(self.proxyUser) == 0:
+            self.connector = socksify.connectSocks5Proxy(self.host, 
+                                                         self.port, 
+                                                         self.proxyHost, 
+                                                         self.proxyPort, 
+                                                         "HALE")
         else:
-            socksify = socks5.ProxyClientCreator(reactor, self.factory)
-            if len(self.proxyUser) == 0:
-                self.connector = socksify.connectSocks5Proxy(self.host, self.port, self.proxyHost, self.proxyPort, "HALE")
-            else:
-                self.connector = socksify.connectSocks5Proxy(self.host, self.port, self.proxyHost, self.proxyPort, "HALE", self.proxyUser, self.proxyPass)        
+            self.connector = socksify.connectSocks5Proxy(self.host, 
+                                                         self.port, 
+                                                         self.proxyHost, 
+                                                         self.proxyPort, 
+                                                         "HALE", 
+                                                         self.proxyUser, 
+                                                         self.proxyPass)        
             
     def startLoop(self):
         """
@@ -127,42 +146,66 @@ class HTTPClientFactory(protocol.ClientFactory):
 
     protocol = HTTPProtocol
 
+    @property
+    def agent(self):
+        if self.config['useragent'] == "None":
+            return ""
+        return self.config['useragent']
+
+    @property
+    def url(self):
+        return self.config['botnet']
+
+    @property
+    def host(self):
+        return self.config['botnet']
+
+    @property
+    def method(self):
+        return self.config['method']
+
+    @property
+    def headers(self):
+        _headers = dict()
+        _headers["Host"] = self.host
+        if self.method == 'POST':
+            _headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+        return _headers
+
     def __init__(self, module, hash, config):
         """
         Constructor
         """
 
-        self.hash = hash
-        self.config = config
+        self.hash    = hash
+        self.config  = config
+        self.path    = self.config['path']
         self.cookies = {}
-        self.url = self.config['botnet']
-        self.host = self.config['botnet']
-        if self.config['useragent'] == "None":
-            self.agent = ""
-        else:
-            self.agent = self.config['useragent']
-        self.path = self.config['path']
-        self.method = self.config['method']
-        self.req = urllib.urlencode({self.config['id_grammar']: self.config['id'], 
-        self.config['build_id_grammar']: self.config['build_id']})
+        self.req     = urllib.urlencode({self.config['id_grammar']: self.config['id'], 
+                                         self.config['build_id_grammar']: self.config['build_id']})
+
         if self.method == 'POST':
-            self.headers = {"Host": self.host, "Content-Type": "application/x-www-form-urlencoded"}
             params = urllib.urlencode({self.config['id_grammar']: self.config['id'], 
-            self.config['build_id_grammar']: self.config['build_id']})
+                                       self.config['build_id_grammar']: self.config['build_id']})
+            
             if self.config['use_base64encoding'] == "True":
                 self.postdata = base64.b64encode(params)
             else:
                 self.postdata = params
+
         if self.method == 'GET':
-            self.headers = {"Host": self.host}
             if self.config['use_base64encoding'] == "True":
-                idParameter = base64.b64encode(self.config['id'])
+                idParameter     = base64.b64encode(self.config['id'])
                 buildIdParamter = base64.b64encode(self.config['build_id'])
-                params = urllib.urlencode({self.config['id_grammar']: idParameter, self.config['build_id_grammar']: buildIdParamter})
+                params          = urllib.urlencode({self.config['id_grammar']: idParameter, 
+                                                    self.config['build_id_grammar']: buildIdParamter})
             else:
-               params = urllib.urlencode({self.config['id_grammar']: self.config['id'], 
-               self.config['build_id_grammar']: self.config['build_id']}) 
-            self.path = self.path + "?" + params
+                params          = urllib.urlencode({self.config['id_grammar']: self.config['id'], 
+                                                    self.config['build_id_grammar']: self.config['build_id']}) 
+            
+            self.path = "%s?%s" % (self.path, params)
+        
         self.wait = 0
         self.module = module
         
