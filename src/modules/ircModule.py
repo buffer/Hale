@@ -228,6 +228,8 @@ class IRCProtocol(Protocol):
                     _topic = topic.split(":")
                     if len(_topic) > 1:
                         _topic = _topic[1]
+                    else:
+                        _topic = topic
 
                     msg = "CURRENTTOPIC Channel: %s Topic: %s" % (chan, _topic, )
                     self.factory.putLog(msg)
