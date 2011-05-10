@@ -18,11 +18,13 @@
 #
 ################################################################################
 
+
 import re
 from utils import *
 import moduleManager
 from twisted.internet import reactor, defer
 from twisted.internet.protocol import Protocol, ClientFactory
+
 
 @moduleManager.register("irc")
 def setup_module(config, hash):
@@ -33,6 +35,7 @@ def setup_module(config, hash):
     """
 
     return IRC(config, hash)
+
 
 class IRC(moduleInterface.Module):
     """
@@ -54,22 +57,24 @@ class IRC(moduleInterface.Module):
         Start execution
         """
         
-        factory = IRCClientFactory(self.hash, self.config, self)
-        host = self.config['botnet']
-        port = int(self.config['port'])
+        factory   = IRCClientFactory(self.hash, self.config, self)
+        host      = self.config['botnet']
+        port      = int(self.config['port'])
         proxyInfo = self.prox.getRandomProxy()
-        if proxyInfo == None:
+
+        if not proxyInfo:
             self.connector = reactor.connectTCP(host, port, factory)
+            return
+
+        proxyHost = proxyInfo['HOST']
+        proxyPort = proxyInfo['PORT']
+        proxyUser = proxyInfo['USER']
+        proxyPass = proxyInfo['PASS']
+        socksify = socks5.ProxyClientCreator(reactor, factory)
+        if len(proxyUser) == 0:
+            self.connector = socksify.connectSocks5Proxy(host, port, proxyHost, proxyPort, "HALE")
         else:
-            proxyHost = proxyInfo['HOST']
-            proxyPort = proxyInfo['PORT']
-            proxyUser = proxyInfo['USER']
-            proxyPass = proxyInfo['PASS']
-            socksify = socks5.ProxyClientCreator(reactor, factory)
-            if len(proxyUser) == 0:
-                self.connector = socksify.connectSocks5Proxy(host, port, proxyHost, proxyPort, "HALE")
-            else:
-                self.connector = socksify.connectSocks5Proxy(host, port, proxyHost, proxyPort, "HALE", proxyUser, proxyPass)
+            self.connector = socksify.connectSocks5Proxy(host, port, proxyHost, proxyPort, "HALE", proxyUser, proxyPass)
         
     def stop(self):
         """
@@ -92,68 +97,157 @@ class IRCProtocol(Protocol):
 
     factory = None
 
+    @property
+    def _ConnectPasswordCmd(self):
+        return "%s %s\r\n" % (self.factory.config['pass_grammar'],
+                              self.factory.config['password'], )
+
+    def doConnectPassword(self):
+        if self.factory.config['password']:
+            self.transport.write(self._ConnectPasswordCmd)
+
+    @property
+    def _SendNickCmd(self):
+        return "%s %s\r\n" % (self.factory.config['nick_grammar'],
+                              self.factory.config['nick'], )
+
+    def doSendNick(self):
+        self.transport.write(self._SendNickCmd)
+
+    @property
+    def _SendUserCmd(self):
+         return "%s %s %s %s :%s\r\n" % (self.factory.config['user_grammar'],
+                                         self.factory.config['username'], 
+                                         self.factory.config['username'],
+                                         self.factory.config['username'],
+                                         self.factory.config['realname'])
+
+    def doSendUser(self):
+        self.transport.write(self._SendUserCmd)
+
     def connectionMade(self):
         """
         When connection is made
         """
         
-        if self.factory.config['password'] != 'None':
-            self.transport.write(self.factory.config['pass_grammar'] + ' ' + self.factory.config['password'] + '\r\n') # connect with pass
-        self.transport.write(self.factory.config['nick_grammar'] + ' ' + self.factory.config['nick'] + '\r\n') # send NICK grammar
-        self.transport.write(self.factory.config['user_grammar'] + ' ' + self.factory.config['username'] + ' ' +  
-        self.factory.config['username'] + ' ' + self.factory.config['username'] + ' :' + 
-        self.factory.config['realname'] + '\r\n') # send USER grammar
+        self.doConnectPassword()
+        self.doSendNick()
+        self.doSendUser()
+
+    def checkIsPing(self, data):
+        return (data.find(self.factory.config['ping_grammar']) != -1)
+
+    @property
+    def _JoinWithPassCmd(self):
+        return "%s %s %s\r\n" % (self.factory.config['join_grammar'],
+                                 self.factory.config['channel'],
+                                 self.factory.config['channel_pass'], )
+
+    @property
+    def _JoinWithoutPassCmd(self):
+        return "%s %s\r\n" % (self.factory.config['join_grammar'],
+                              self.factory.config['channel'], )
+
+    def doSendPong(self, data):
+        pong = "%s %s\r\n" % (self.factory.config['pong_grammar'], 
+                              data.split()[1])
+        self.transport.write(pong)
+
+    def doSendJoin(self):
+        if not self.factory.firstPing:
+            return
+
+        if self.factory.config['channel_pass']:
+            joinCmd = _JoinWithPassCmd
+        else:
+            joinCmd = _JoinWithoutPassCmd
+        
+        self.transport.write(joinCmd)
+        self.factory.firstPing = False
+
+    def checkIsTopic(self, data):
+        return (data.find(self.factory.config['topic_grammar']) != -1)
+
+    def checkIsCurrentTopic(self, data):
+        return (data.find(self.factory.config['currenttopic_grammar']) != -1)
+
+    def checkIsPrivMsg(self, data):
+        return (data.find(self.factory.config['privmsg_grammar']) != -1)
+
+    def checkIsVersion(self, data):
+        return (data.find(self.factory.config['version_grammar']) != -1)
+
+    def checkIsTime(self, data):
+        return (data.find(self.factory.config['time_grammar']) != -1)
 
     def dataReceived(self, data):
         """
         Data is received
         """
 
-        checkHost = data.split(':')[1].split(' ')[0].strip()
-        match = self.factory.expr.findall(checkHost)
-        if match:
-            self.factory.addRelIP(data.split('@')[1].split(' ')[0].strip())
+        checkHost  = None
+        match      = None
+        firstline  = None
+        secondline = None
+
+        s_data = data.split(':')
+        if len(s_data) > 1:
+            checkHost = s_data[1].split(' ')[0].strip()
+
+        if checkHost:
+            match = self.factory.expr.findall(checkHost)
+
+        t_data = data.split('@')
+        if match and len(t_data) > 1:
+            self.factory.addRelIP(t_data[1].split(' ')[0].strip())
+
         self.factory.checkForURL(data)
         
-        if data.find(self.factory.config['ping_grammar']) != -1: # ping
-            self.transport.write(self.factory.config['pong_grammar'] + ' ' + data.split()[1] + '\r\n') # send pong
-            if self.factory.firstPing:
-                if self.factory.config['channel_pass'] != 'None': # joing with pass
-                    self.transport.write(self.factory.config['join_grammar'] + ' ' + self.factory.config['channel'] + ' ' + self.factory.config['channel_pass'] + '\r\n')
-                else:
-                    self.transport.write(self.factory.config['join_grammar'] + ' ' + self.factory.config['channel'] + '\r\n') # join without pass
-                self.factory.firstPing = False
+        if self.checkIsPing(data):              # PING
+            self.doSendPong(data) 
+            self.doSendJoin()
 
-        elif data.find(self.factory.config['topic_grammar']) != -1: # topic
+        elif self.checkIsTopic(data):           # TOPIC
            self.factory.putLog(data)
 
-        elif data.find(self.factory.config['currenttopic_grammar']) != -1: # currenttopic
-            firstline = secondline = None
-            chan = topic = setby = ''
-
+        elif self.checkIsCurrentTopic(data):    # RPL_TOPIC
             for line in data.split('\r\n'):
-               if not firstline:
-                  firstline = line.split(self.factory.config['nick'])[1].strip()
-                  chan = firstline.split(' ')[0].strip()
-                  topic = firstline.split(' ')[1].strip()
-                  self.factory.putLog("CURRENTTOPIC " + "Channel: " + chan + " Topic: " + topic.split(":")[1])
-                  continue
-               if not secondline:
-                  secondline = line.split(self.factory.config['channel'])[1].strip()
-                  setby = secondline.split(' ')[0].strip()
-                  self.factory.putLog("CURRENTTOPIC " + "Set by: " + setby)
-                  break
+                if not firstline:
+                    s_line = line.split(self.factory.config['nick'])
+                    if len(s_line) < 2:
+                        continue
+
+                    firstline = s_line[1].strip().split(' ')
+                    if len(firstline) < 2:
+                        firstline = None
+                        continue
+
+                    chan  = firstline[0].strip()
+                    topic = firstline[1].strip()
+
+                    self.factory.putLog("CURRENTTOPIC " + "Channel: " + chan + " Topic: " + topic.split(":")[1])
+                    continue
+
+                if not secondline:
+                    secondline = line.split(self.factory.config['channel'])
+                    if len(secondline) < 2:
+                        secondline = None
+                        continue
+                        
+                    secondline = secondline[1].strip()
+                    setby      = secondline.split(' ')[0].strip()
+
+                    self.factory.putLog("CURRENTTOPIC " + "Set by: " + setby)
+                    break
                   
+        elif self.checkIsPrivMsg(data):         # PRIVMSG
+            if not self.checkIsVersion(data) and not self.checkIsTime(data)::
+                self.factory.putLog(data)
 
-        elif data.find(self.factory.config['privmsg_grammar']) != -1: # privmsg
-            if not data.find(self.factory.config['version_grammar']) != -1:
-                if not data.find(self.factory.config['time_grammar']) != -1:
-                    self.factory.putLog(data)
-
-        else: # unrecognized commands
-            if match:
-                grammars = self.factory.config.values()
-                command = data.split(':')[1].split(' ')[1]
+        else:                                   # Unrecognized commands
+            if match and len(s_data) > 1:
+                grammars = self.factory.config.values() 
+                command  = sdata[1].split(' ')[1]
                 if command not in grammars:
                     self.factory.putLog(data)
         
@@ -170,11 +264,11 @@ class IRCClientFactory(ClientFactory):
         and config to be used
         """
         
-        self.module = module
-        self.expr = re.compile('!~.*?@')
-        self.config = config
+        self.module    = module
+        self.expr      = re.compile('!~.*?@')
+        self.config    = config
         self.firstPing = True
-        self.hash = hash
+        self.hash      = hash
 
     def clientConnectionFailed(self, connector, reason):
         """
