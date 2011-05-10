@@ -24,6 +24,7 @@ from utils import *
 from twisted.internet import reactor, protocol
 from twisted.web.client import HTTPPageGetter
 
+
 @moduleManager.register("http")
 def setup_module(config, hash):
     """
@@ -34,6 +35,7 @@ def setup_module(config, hash):
 
     return HTTP(config, hash)
     
+
 class HTTP(moduleInterface.Module):
     """
     Implementation of a http client to do http based
@@ -127,6 +129,7 @@ class HTTP(moduleInterface.Module):
         
         return self.config
         
+
 class HTTPProtocol(HTTPPageGetter):
     """
     Protocol class fetching web page
@@ -139,6 +142,7 @@ class HTTPProtocol(HTTPPageGetter):
         
         self.factory.handleResponse(data.strip())
         
+
 class HTTPClientFactory(protocol.ClientFactory):
     """
     Clientfactory taking care of the http request
@@ -223,8 +227,14 @@ class HTTPClientFactory(protocol.ClientFactory):
                 # Could not decode data, maybe not base64 encoded, got response
                 return
             
-            moduleCoordinator.ModuleCoordinator().addEvent(moduleCoordinator.URL_EVENT, response, self.hash)
-            moduleCoordinator.ModuleCoordinator().addEvent(moduleCoordinator.LOG_EVENT, response, self.hash, self.config)
+            moduleCoordinator.ModuleCoordinator().addEvent(moduleCoordinator.URL_EVENT, 
+                                                           response, 
+                                                           self.hash)
+
+            moduleCoordinator.ModuleCoordinator().addEvent(moduleCoordinator.LOG_EVENT, 
+                                                           response, 
+                                                           self.hash, 
+                                                           self.config)
             # extract wait grammar for new reconnect interval
             try:
                 self.wait = int(response.split(self.config['wait_grammar'])[1].split(self.config['response_separator'])[1])
@@ -237,15 +247,17 @@ class HTTPClientFactory(protocol.ClientFactory):
         """
         Called on failed connection to server
         """
-
-        moduleCoordinator.ModuleCoordinator().putError("Error connecting to " + self.config['botnet'], self.module)
+        
+        msg = "Error connecting to %s" % (self.host, )
+        moduleCoordinator.ModuleCoordinator().putError(msg, self.module)
 
     def clientConnectionLost(self, connector, reason):
         """
         Called on lost connection to server
         """
-
-        moduleCoordinator.ModuleCoordinator().putError("Connection lost to " + self.config['botnet'], self.module)
+        
+        msg = "Connection lost to %s" % (self.host, )
+        moduleCoordinator.ModuleCoordinator().putError(msg, self.module)
                 
     def __call__(self):
         """
@@ -253,7 +265,7 @@ class HTTPClientFactory(protocol.ClientFactory):
         the protocol handled by this factory
         """
         
-        p = self.protocol()
+        p         = self.protocol()
         p.factory = self
         return p
     
