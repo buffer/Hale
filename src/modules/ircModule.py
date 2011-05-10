@@ -224,8 +224,13 @@ class IRCProtocol(Protocol):
 
                     chan  = firstline[0].strip()
                     topic = firstline[1].strip()
+                    
+                    _topic = topic.split(":")
+                    if len(_topic) > 1:
+                        _topic = _topic[1]
 
-                    self.factory.putLog("CURRENTTOPIC " + "Channel: " + chan + " Topic: " + topic.split(":")[1])
+                    msg = "CURRENTTOPIC Channel: %s Topic: %s" % (chan, _topic, )
+                    self.factory.putLog(msg)
                     continue
 
                 if not secondline:
@@ -237,7 +242,8 @@ class IRCProtocol(Protocol):
                     secondline = secondline[1].strip()
                     setby      = secondline.split(' ')[0].strip()
 
-                    self.factory.putLog("CURRENTTOPIC " + "Set by: " + setby)
+                    msg = "CURRENTTOPIC Set by: %s" % (setby, )
+                    self.factory.putLog(msg)
                     break
                   
         elif self.checkIsPrivMsg(data):         # PRIVMSG
